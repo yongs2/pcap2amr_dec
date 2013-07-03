@@ -13,6 +13,7 @@ static const int amr_frame_rates[] = {4750, 5150, 5900, 6700, 7400, 7950, 10200,
 static const int amr_frame_sizes[] = {12, 13, 15, 17, 19, 20, 26, 31, 5, 0 };
 
 void *dec1 = NULL;
+void *enc1 = NULL;
 extern int b_octet_align;
 
 #define toc_get_f(toc) ((toc) >> 7)
@@ -42,6 +43,7 @@ int amrnb_decode_init()
 int amrnb_decode_uninit()
 {
 	Decoder_Interface_exit(dec1);
+	dec1 = NULL;
 	return 0;
 }
 
@@ -94,7 +96,7 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 		nFTbits = bs_read_u(payload, 4);
 		if(nFTbits > MAX_FRAME_TYPE)
 		{
-			printf("%s, Bad amr toc, index=%i (MAX=%d)", __func__, nFTbits, MAX_FRAME_TYPE);
+			printf("%s, Bad amr toc, index=%i (MAX=%d)\n", __func__, nFTbits, MAX_FRAME_TYPE);
 			break;
 		}
 		nFrameData += amr_frame_sizes[nFTbits];
@@ -120,7 +122,7 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 	toclen = toc_list_check(tocs, nSize);
 	if (toclen == -1)
 	{
-		printf("Bad AMR toc list");
+		printf("Bad AMR toc list\n");
 		return -3;
 	}
     
@@ -135,7 +137,7 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 		index = toc_get_index(tocs[i]);
 		if (index > MAX_FRAME_TYPE)
 		{
-			printf("Bad amr toc, index=%i", index);
+			printf("Bad amr toc, index=%i\n", index);
 			break;
 		}
 		framesz = amr_frame_sizes[index];
@@ -147,5 +149,111 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 	} // end of for
 	bs_free(payload);
 
+	return nRet;
+}
+
+
+int dtx = 0;
+int mode = 7;
+int ptime = 20;
+
+int amrnb_encode_init()
+{
+	enc1 = Encoder_Interface_init(dtx);
+	return 0;
+}
+
+int amrnb_encode_uninit()
+{
+	Encoder_Interface_exit(enc1);
+	enc1 = NULL;
+	return 0;
+}
+
+int amrnb_encode(char *pData, int nSize, FILE *fp)
+{
+	int nRet = 0;
+	unsigned int unitary_buff_size = sizeof (int16_t) * NUM_SAMPLES;
+	unsigned int buff_size = unitary_buff_size * ptime / 20;
+	uint8_t tmp[OUT_MAX_SIZE];
+	int16_t samples[buff_size];
+	uint8_t	tmp1[20*OUT_MAX_SIZE];
+	bs_t	*payload = NULL;
+	int		nCmr = 0xF;
+	int		nFbit = 1, nFTbits = 0, nQbit = 0;
+	int		nReserved = 0, nPadding = 0;
+	int		nFrameData = 0, framesz = 0, nWrite = 0;
+	int		offset = 0;
+
+	uint8_t output[OUT_MAX_SIZE * buff_size / unitary_buff_size + 1];
+	int 	nOutputSize = 0;
+
+	printf("%s, unitary_buff_size=%d, buff_size=%d, sizeof(output)=%d\n", __func__, unitary_buff_size, buff_size, sizeof(output));
+
+	while (nSize >= buff_size)
+	{
+		memset(output, 0, sizeof(output));
+		memcpy((uint8_t*)samples, pData, buff_size);
+		payload = bs_new(output, OUT_MAX_SIZE * buff_size / unitary_buff_size + 1);
+		if(b_octet_align == 0)
+		{	// Bandwidth efficient mode
+			// 1111 ; CMR (4 bits)
+			bs_write_u(payload, 4, nCmr);
+		}
+		else
+		{	// octet-aligned mode
+			// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
+			bs_write_u(payload, 4, nCmr);
+			bs_write_u(payload, 4, nReserved);
+		}
+		
+		nFrameData = 0; nWrite = 0;
+		for (offset = 0; offset < buff_size; offset += unitary_buff_size)
+		{
+			int ret = Encoder_Interface_Encode(enc1, mode, &samples[offset / sizeof (int16_t)], tmp, dtx);
+			if (ret <= 0 || ret > 32)
+			{
+				printf("Encoder returned %i\n", ret);
+				continue;
+			}
+			nFbit = tmp[0] >> 7;
+			nFbit = (offset+buff_size >= unitary_buff_size) ? 0 : 1;
+			nFTbits = tmp[0] >> 3 & 0x0F;
+			if(nFTbits > MAX_FRAME_TYPE)
+			{
+				printf("%s, Bad amr toc, index=%i (MAX=%d)\n", __func__, nFTbits, MAX_FRAME_TYPE);
+				break;
+			}
+			nQbit = tmp[0] >> 2 & 0x01;
+			framesz = amr_frame_sizes[nFTbits];
+			printf("%s, %03d(%d,%d), F=%d, FT=%d, Q=%d, framesz=%d (%d),tmp1=%d\n", __func__, offset, offset+buff_size, unitary_buff_size, nFbit, nFTbits, nQbit, framesz, ret-1, nFrameData);
+			
+			// Frame 데이터를 임시로 복사
+			memcpy(&tmp1[nFrameData], &tmp[1], framesz);
+			nFrameData += framesz;
+			
+			// write TOC
+			bs_write_u(payload, 1, nFbit);
+			bs_write_u(payload, 4, nFTbits);
+			bs_write_u(payload, 1, nQbit);
+			if(b_octet_align == 1)
+			{	// octet-align, add padding bit
+				bs_write_u(payload, 2, nPadding);
+			}
+		} // end of for
+		if(offset > 0)
+		{
+			nWrite = bs_write_bytes_ex(payload, tmp1, nFrameData);
+		}
+		printf("%s, bs_write_bytes_ex(framesz=%d)=%d(%d),tmp[6]{%02x%02x %02x%02x %02x%02x}\n", __func__, framesz, nWrite, bs_pos(payload), tmp1[0], tmp1[1], tmp1[2], tmp1[3], tmp1[4], tmp1[5]);
+		nOutputSize = 1 + framesz;
+
+		nRet = fwrite(output, (size_t)1, nOutputSize, fp);
+		printf("%s, fwrite(%d)=%d\n", __func__, nOutputSize, nRet);
+		
+		bs_free(payload);
+
+		nSize -= buff_size;
+	} // end of while
 	return nRet;
 }
