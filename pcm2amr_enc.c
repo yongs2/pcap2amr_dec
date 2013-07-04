@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
 	else
 	{
 		//amrwb_encode_init();
-		//nFileHeaderSize = strcpy(cData, "#!AMRWB\n");
+		//nFileHeaderSize = strcpy(cData, "#!AMR-WB\n");
 		//nRet = fwrite(cData, (size_t)1, nFileHeaderSize, fout);
 	}
 
