@@ -9,16 +9,20 @@ typedef unsigned short int uint16;
 typedef signed int int32;
 typedef signed short int int16;
 
+int b_is_rtp = 0;
 int b_octet_align = 1;
+int dtx = 0;
+int mode = 7;
+int ptime = 20;
 int nAmrCodec = 0;
 
 int amrnb_encode_init();
 int amrnb_encode_uninit();
 int amrnb_encode(char *pData, int nSize, FILE *fp);
 
-//int amrwb_encode_init();
-//int amrwb_encode_uninit();
-//int amrwb_encode(char *pData, int nSize, FILE *fp);
+int amrwb_encode_init();
+int amrwb_encode_uninit();
+int amrwb_encode(char *pData, int nSize, FILE *fp);
 
 int main(int argc, char *argv[])
 {
@@ -28,7 +32,6 @@ int main(int argc, char *argv[])
 	FILE *fp = NULL, *fout = NULL;
 	int nPcmSize = 320;
 	unsigned char cData[65536];
-	int nFileHeaderSize = 0;
 
 	if(argc <= 1)
 	{
@@ -46,10 +49,14 @@ int main(int argc, char *argv[])
 		if(strcasecmp(argv[2], "nb") == 0)
 		{
 			nAmrCodec = 0;	// amr-mb
+			mode = 7;
+			nPcmSize = 320;
 		}
 		else if(strcasecmp(argv[2], "wb") == 0)
 		{
 			nAmrCodec = 1;	// amr-wb
+			mode = 8;
+			nPcmSize = 640;
 		}
 	}
 	if(argc > 3)
@@ -72,16 +79,15 @@ int main(int argc, char *argv[])
 
 	if(nAmrCodec == 0)
 	{
+		const char szFileHeader[] = "#!AMR\n";
 		amrnb_encode_init();
-		strcpy(cData, "#!AMR\n");
-		nFileHeaderSize = strlen(cData);
-		nRet = fwrite(cData, (size_t)1, nFileHeaderSize, fout);
+		nRet = fwrite(szFileHeader, (size_t)1, strlen(szFileHeader), fout);
 	}
 	else
 	{
-		//amrwb_encode_init();
-		//nFileHeaderSize = strcpy(cData, "#!AMR-WB\n");
-		//nRet = fwrite(cData, (size_t)1, nFileHeaderSize, fout);
+		const char szFileHeader[] = "#!AMR-WB\n";
+		amrwb_encode_init();
+		nRet = fwrite(szFileHeader, (size_t)1, strlen(szFileHeader), fout);
 	}
 
 	while(1)
@@ -100,9 +106,9 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				//nRet = amrwb_encode((char *)(cData), nSize, fout);
+				nRet = amrwb_encode((char *)(cData), nSize, fout);
 			}
-			printf("PCM.amr_encode(0x%x, %d)=%d\n", cData, nSize, nRet);
+			printf("PCM.amr_encode(0x%x, %d)=%d\n", (unsigned char)cData, nSize, nRet);
 		}
 		else
 		{
@@ -119,7 +125,7 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		//amrwb_encode_uninit();
+		amrwb_encode_uninit();
 	}
 
 	return 0;

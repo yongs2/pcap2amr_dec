@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <opencore-amrwb/dec_if.h>
+#include <vo-amrwbenc/enc_if.h>
 #include "bs.h"
 
 #define MAX_FRAME_TYPE	(9)		// SID Packet
@@ -14,7 +15,12 @@ static const int amr_frame_rates[] = {6600, 8850, 12650, 14250, 15850, 18250, 19
 static const int amr_frame_sizes[] = {17, 23, 32, 36, 40, 46, 50, 58, 60, 5};
 
 void *dec2 = NULL;
+void *enc2 = NULL;
+extern int b_is_rtp;
 extern int b_octet_align;
+extern int dtx;
+extern int mode;
+extern int ptime;
 
 #define toc_get_f(toc) ((toc) >> 7)
 #define toc_get_index(toc) ((toc>>3) & 0xf)
@@ -63,7 +69,7 @@ int amrwb_decode(char *pData, int nSize, FILE *fp)
 	int		nFrameData = 0;
 	int		i = 0, index = 0, framesz = 0;
 	
-	if (nSize < 2)
+	if(nSize < 2)
 	{
 		printf("Too short packet\n");
 		return -1;
@@ -72,19 +78,22 @@ int amrwb_decode(char *pData, int nSize, FILE *fp)
 	payload = bs_new((uint8_t *)pData, nSize);
 	if(payload == NULL)
 	{
-		return - 2;
+		return -2;
 	}
 	
-	if(b_octet_align == 0)
-	{	// Bandwidth efficient mode
-		// 1111 ; CMR (4 bits)
-		nCmr = bs_read_u(payload, 4);
-	}
-	else
-	{	// octet-aligned mode
-		// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
-		nCmr = bs_read_u(payload, 4);
-		nReserved = bs_read_u(payload, 4);
+	if(b_is_rtp == 1)
+	{
+		if(b_octet_align == 0)
+		{	// Bandwidth efficient mode
+			// 1111 ; CMR (4 bits)
+			nCmr = bs_read_u(payload, 4);
+		}
+		else
+		{	// octet-aligned mode
+			// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
+			nCmr = bs_read_u(payload, 4);
+			nReserved = bs_read_u(payload, 4);
+		}
 	}
 	nTocLen = 0; nFrameData = 0;
 	while(nFbit == 1)
@@ -104,7 +113,7 @@ int amrwb_decode(char *pData, int nSize, FILE *fp)
 		nQbit = bs_read_u(payload, 1);
 		tocs[nTocLen++] = ((nFbit << 7) | (nFTbits << 3) | (nQbit << 2)) & 0xFC;
 		if(b_octet_align == 1)
-		{	// octet-align ëª¨ë“œì—ì„œëŠ” Padding bit 2bitë¥¼ ë” ì½ì–´ì•¼ í•œë‹¤.
+		{	// octet-align ¸ðµå¿¡¼­´Â Padding bit 2bit¸¦ ´õ ÀÐ¾î¾ß ÇÑ´Ù.
 			nPadding = bs_read_u(payload, 2);
 		}
 		//printf("%s, F=%d, FT=%d, Q=%d, tocs[%d]=0x%x, FrameData=%d\n", __func__, nFbit, nFTbits, nQbit, nTocLen, tocs[nTocLen-1], nFrameData);
@@ -127,7 +136,7 @@ int amrwb_decode(char *pData, int nSize, FILE *fp)
 		bs_free(payload);
 		return -3;
 	}
-
+	
 	if((nFrameData) != bs_bytes_left(payload))
 	{
 		printf("%s, invalid data mismatch, FrameData=%d, bytes_left=%d\n", __func__, nFrameData, bs_bytes_left(payload));
@@ -151,6 +160,122 @@ int amrwb_decode(char *pData, int nSize, FILE *fp)
 		nRet = fwrite(output, (size_t)1, nSize, fp);
 	} // end of for
 	bs_free(payload);
-	
+
+	return nRet;
+}
+
+int amrwb_encode_init()
+{
+	enc2 = E_IF_init();
+	return 0;
+}
+
+int amrwb_encode_uninit()
+{
+	E_IF_exit(enc2);
+	enc2 = NULL;
+	return 0;
+}
+
+int amrwb_encode(char *pData, int nSize, FILE *fp)
+{
+	int nRet = 0;
+	unsigned int unitary_buff_size = sizeof (int16_t) * NUM_SAMPLES;
+	unsigned int buff_size = unitary_buff_size * ptime / 20;
+	uint8_t tmp[OUT_MAX_SIZE];
+	int16_t samples[buff_size];
+	uint8_t	tmp1[20*OUT_MAX_SIZE];
+	bs_t	*payload = NULL;
+	int		nCmr = 0xF;
+	int		nFbit = 1, nFTbits = 0, nQbit = 0;
+	int		nReserved = 0, nPadding = 0;
+	int		nFrameData = 0, framesz = 0, nWrite = 0;
+	int		offset = 0;
+
+	uint8_t output[OUT_MAX_SIZE * buff_size / unitary_buff_size + 1];
+	int 	nOutputSize = 0;
+
+	printf("%s, unitary_buff_size=%d, buff_size=%d, sizeof(output)=%lu\n", __func__, unitary_buff_size, buff_size, sizeof(output));
+
+	while (nSize >= buff_size)
+	{
+		memset(output, 0, sizeof(output));
+		memcpy((uint8_t*)samples, pData, buff_size);
+		payload = bs_new(output, OUT_MAX_SIZE * buff_size / unitary_buff_size + 1);
+		
+		if(b_is_rtp == 1)
+		{
+			/** AMR file ·Î »ý¼ºÇÒ ¶§¿¡´Â CMR Á¤º¸¸¦ ÀúÀåÇÒ ÇÊ¿ä°¡ ¾ø´Ù. RTP ·Î Àü¼ÛÇÒ ¶§¿¡¸¸ ÇÊ¿äÇÔ
+			*/
+			if(b_octet_align == 0)
+			{	// Bandwidth efficient mode
+				// 1111 ; CMR (4 bits)
+				bs_write_u(payload, 4, nCmr);
+			}
+			else
+			{	// octet-aligned mode
+				// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
+				bs_write_u(payload, 4, nCmr);
+				bs_write_u(payload, 4, nReserved);
+			}
+		}
+		else
+		{
+			/** Surf Å×½ºÆ®¿ë */
+			if(b_octet_align == 0)
+			{	// Bandwidth efficient mode
+				// 1111 ; CMR (4 bits)
+				bs_write_u(payload, 4, nCmr);
+			}
+		}
+		
+		nFrameData = 0; nWrite = 0;
+		for (offset = 0; offset < buff_size; offset += unitary_buff_size)
+		{
+			int ret = E_IF_encode(enc2, mode, &samples[offset / sizeof (int16_t)], tmp, dtx);
+			if (ret < 1)
+			{
+				printf("Encoder returned %i (< 1)\n", ret);
+				return -1;
+			}
+			nFbit = tmp[0] >> 7;
+			nFbit = (offset+buff_size >= unitary_buff_size) ? 0 : 1;
+			nFTbits = tmp[0] >> 3 & 0x0F;
+			if(nFTbits > MAX_FRAME_TYPE)
+			{
+				printf("%s, Bad amr toc, index=%i (MAX=%d)\n", __func__, nFTbits, MAX_FRAME_TYPE);
+				break;
+			}
+			nQbit = tmp[0] >> 2 & 0x01;
+			framesz = amr_frame_sizes[nFTbits];
+			printf("%s, %03d(%d,%d), F=%d, FT=%d, Q=%d, framesz=%d (%d),tmp1=%d\n", __func__, offset, offset+buff_size, unitary_buff_size, nFbit, nFTbits, nQbit, framesz, ret-1, nFrameData);
+			
+			// Frame µ¥ÀÌÅÍ¸¦ ÀÓ½Ã·Î º¹»ç
+			memcpy(&tmp1[nFrameData], &tmp[1], framesz);
+			nFrameData += framesz;
+			
+			// write TOC
+			bs_write_u(payload, 1, nFbit);
+			bs_write_u(payload, 4, nFTbits);
+			bs_write_u(payload, 1, nQbit);
+			if(b_octet_align == 1)
+			{	// octet-align, add padding bit
+				bs_write_u(payload, 2, nPadding);
+			}
+		} // end of for
+		if(offset > 0)
+		{
+			nWrite = bs_write_bytes_ex(payload, tmp1, nFrameData);
+		}
+		printf("%s, bs_write_bytes_ex(framesz=%d)=%d(%d),tmp[6]{%02x%02x %02x%02x %02x%02x}\n", __func__, framesz, nWrite, bs_pos(payload), tmp1[0], tmp1[1], tmp1[2], tmp1[3], tmp1[4], tmp1[5]);
+		nOutputSize = 1 + framesz;
+
+		nRet = fwrite(output, (size_t)1, nOutputSize, fp);
+		printf("%s, fwrite(%d)=%d\n", __func__, nOutputSize, nRet);
+		
+		bs_free(payload);
+
+		nSize -= buff_size;
+	} // end of while
 	return nRet;
 }

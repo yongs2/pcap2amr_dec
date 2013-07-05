@@ -24,7 +24,7 @@ LDIR    = 	-L${HOME}/lib -L${OPENCORE_PATH}/lib
 
 CFLAGS	= ${G_PROJ_DEFINE} ${SYSTEM_DEFINE} ${SYSTEM_CFLAGS} -D__GLOBAL__ -Wall -D_REENTRANT -g 
 
-LFLAGS	= -lopencore-amrnb -lopencore-amrwb
+LFLAGS	= -lopencore-amrnb -lopencore-amrwb -lvo-amrwbenc
 
 SRCS_1	= pcap2amr_dec.c amrnb.c amrwb.c
 OBJS_1	= ${SRCS_1:%.c=${OBJECT_PATH}/%.o}

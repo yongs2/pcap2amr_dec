@@ -14,7 +14,11 @@ static const int amr_frame_sizes[] = {12, 13, 15, 17, 19, 20, 26, 31, 5, 0 };
 
 void *dec1 = NULL;
 void *enc1 = NULL;
+extern int b_is_rtp;
 extern int b_octet_align;
+extern int dtx;
+extern int mode;
+extern int ptime;
 
 #define toc_get_f(toc) ((toc) >> 7)
 #define toc_get_index(toc)	((toc>>3) & 0xf)
@@ -53,7 +57,7 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 	static const int nsamples = NUM_SAMPLES;
 	uint8_t tmp[OUT_MAX_SIZE];
 	uint8_t output[NUM_SAMPLES * 2];
-
+	
 	uint8_t	tocs[20] = {0,};
 	int 	nTocLen = 0, toclen = 0;
 	bs_t	*payload = NULL;
@@ -63,27 +67,34 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 	int		nQbit = 0;
 	int		nFrameData = 0;
 	int		i = 0, index = 0, framesz = 0;
-
+	
 	if(nSize < 2)
+	{
+		printf("Too short packet\n");
 		return -1;
-
+	}
+	
 	payload = bs_new((uint8_t *)pData, nSize);
 	if(payload == NULL)
+	{
 		return -2;
-
-	printf("%s, Size=%d, bs_new.p[5]{%02x %02x%02x %02x%02x}, left=%d\n", __func__, nSize, 
-		payload->p[0], payload->p[1], payload->p[2], payload->p[3], payload->p[4], payload->bits_left);
-
-	if(b_octet_align == 0)
-	{	// Bandwidth efficient mode
-		// 1111 ; CMR (4 bits)
-		nCmr = bs_read_u(payload, 4);
 	}
-	else
-	{	// octet-aligned mode
-		// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
-		nCmr = bs_read_u(payload, 4);
-		nReserved = bs_read_u(payload, 4);
+
+	//printf("%s, Size=%d, bs_new.p[5]{%02x %02x%02x %02x%02x}, left=%d\n", __func__, nSize, 
+	//	payload->p[0], payload->p[1], payload->p[2], payload->p[3], payload->p[4], payload->bits_left);
+	if(b_is_rtp == 1)
+	{
+		if(b_octet_align == 0)
+		{	// Bandwidth efficient mode
+			// 1111 ; CMR (4 bits)
+			nCmr = bs_read_u(payload, 4);
+		}
+		else
+		{	// octet-aligned mode
+			// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
+			nCmr = bs_read_u(payload, 4);
+			nReserved = bs_read_u(payload, 4);
+		}
 	}
 	nTocLen = 0; nFrameData = 0;
 	while(nFbit == 1)
@@ -103,29 +114,30 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 		nQbit = bs_read_u(payload, 1);
 		tocs[nTocLen++] = ((nFbit << 7) | (nFTbits << 3) | (nQbit << 2)) & 0xFC;
 		if(b_octet_align == 1)
-		{	// octet-align Î™®ÎìúÏóêÏÑúÎäî Padding bit 2bitÎ•º Îçî ÏùΩÏñ¥Ïïº ÌïúÎã§.
+		{	// octet-align ∏µÂø°º≠¥¬ Padding bit 2bit∏¶ ¥ı ¿–æÓæﬂ «—¥Ÿ.
 			nPadding = bs_read_u(payload, 2);
 		}
-		printf("%s, F=%d, FT=%d, Q=%d, tocs[%d]=0x%x, FrameData=%d\n", __func__, nFbit, nFTbits, nQbit, nTocLen, tocs[nTocLen-1], nFrameData);
+		//printf("%s, F=%d, FT=%d, Q=%d, tocs[%d]=0x%x, FrameData=%d\n", __func__, nFbit, nFTbits, nQbit, nTocLen, tocs[nTocLen-1], nFrameData);
 	} // end of while
 	nBitLeft = payload->bits_left;
 	
 	if(b_octet_align == 0)
 	{
-		printf("%s, nCmr=%d, TOC=%d, nPadding(%d)=%d, FrameData=%d\n", __func__, nCmr, nTocLen, nBitLeft, nPadding, nFrameData);
+		//printf("%s, nCmr=%d, TOC=%d, nPadding(%d)=%d, FrameData=%d\n", __func__, nCmr, nTocLen, nBitLeft, nPadding, nFrameData);
 	}
 	else
 	{
-		printf("%s, nCmr=%d, nReserved=%d, TOC=%d, nPadding(%d)=%d, FrameData=%d\n", __func__, nCmr, nReserved, nTocLen, nBitLeft, nPadding, nFrameData);
+		//printf("%s, nCmr=%d, nReserved=%d, TOC=%d, nPadding(%d)=%d, FrameData=%d\n", __func__, nCmr, nReserved, nTocLen, nBitLeft, nPadding, nFrameData);
 	}
 	
 	toclen = toc_list_check(tocs, nSize);
 	if (toclen == -1)
 	{
 		printf("Bad AMR toc list\n");
+		bs_free(payload);
 		return -3;
 	}
-    
+	
 	if((nFrameData) != bs_bytes_left(payload))
 	{
 		printf("%s, invalid data mismatch, FrameData=%d, bytes_left=%d\n", __func__, nFrameData, bs_bytes_left(payload));
@@ -142,8 +154,9 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 		}
 		framesz = amr_frame_sizes[index];
 		nRead = bs_read_bytes_ex(payload, &tmp[1], framesz);
-		printf("%s, toc=0x%x, bs_read_bytes_ex(framesz=%d)=%d,tmp[5]{%02x %02x%02x %02x%02x}\n", __func__, tmp[0], framesz, nRead, tmp[1], tmp[2], tmp[3], tmp[4], tmp[5]);
+		//printf("%s, toc=0x%x, bs_read_bytes_ex(framesz=%d)=%d,tmp[5]{%02x %02x%02x %02x%02x}\n", __func__, tmp[0], framesz, nRead, tmp[1], tmp[2], tmp[3], tmp[4], tmp[5]);
 		nSize = nsamples * 2;
+		
 		Decoder_Interface_Decode(dec1, tmp, (short*) output, 0);
 		nRet = fwrite(output, (size_t)1, nSize, fp);
 	} // end of for
@@ -151,11 +164,6 @@ int amrnb_decode(char *pData, int nSize, FILE *fp)
 
 	return nRet;
 }
-
-
-int dtx = 0;
-int mode = 7;
-int ptime = 20;
 
 int amrnb_encode_init()
 {
@@ -188,23 +196,38 @@ int amrnb_encode(char *pData, int nSize, FILE *fp)
 	uint8_t output[OUT_MAX_SIZE * buff_size / unitary_buff_size + 1];
 	int 	nOutputSize = 0;
 
-	printf("%s, unitary_buff_size=%d, buff_size=%d, sizeof(output)=%d\n", __func__, unitary_buff_size, buff_size, sizeof(output));
+	printf("%s, unitary_buff_size=%d, buff_size=%d, sizeof(output)=%lu\n", __func__, unitary_buff_size, buff_size, sizeof(output));
 
 	while (nSize >= buff_size)
 	{
 		memset(output, 0, sizeof(output));
 		memcpy((uint8_t*)samples, pData, buff_size);
 		payload = bs_new(output, OUT_MAX_SIZE * buff_size / unitary_buff_size + 1);
-		if(b_octet_align == 0)
-		{	// Bandwidth efficient mode
-			// 1111 ; CMR (4 bits)
-			bs_write_u(payload, 4, nCmr);
+		
+		if(b_is_rtp == 1)
+		{
+			/** AMR file ∑Œ ª˝º∫«“ ∂ßø°¥¬ CMR ¡§∫∏∏¶ ¿˙¿Â«“ « ø‰∞° æ¯¥Ÿ. RTP ∑Œ ¿¸º€«“ ∂ßø°∏∏ « ø‰«‘
+			*/
+			if(b_octet_align == 0)
+			{	// Bandwidth efficient mode
+				// 1111 ; CMR (4 bits)
+				bs_write_u(payload, 4, nCmr);
+			}
+			else
+			{	// octet-aligned mode
+				// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
+				bs_write_u(payload, 4, nCmr);
+				bs_write_u(payload, 4, nReserved);
+			}
 		}
 		else
-		{	// octet-aligned mode
-			// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
-			bs_write_u(payload, 4, nCmr);
-			bs_write_u(payload, 4, nReserved);
+		{
+			/** Surf ≈◊Ω∫∆ÆøÎ */
+			if(b_octet_align == 0)
+			{	// Bandwidth efficient mode
+				// 1111 ; CMR (4 bits)
+				bs_write_u(payload, 4, nCmr);
+			}
 		}
 		
 		nFrameData = 0; nWrite = 0;
@@ -228,7 +251,7 @@ int amrnb_encode(char *pData, int nSize, FILE *fp)
 			framesz = amr_frame_sizes[nFTbits];
 			printf("%s, %03d(%d,%d), F=%d, FT=%d, Q=%d, framesz=%d (%d),tmp1=%d\n", __func__, offset, offset+buff_size, unitary_buff_size, nFbit, nFTbits, nQbit, framesz, ret-1, nFrameData);
 			
-			// Frame Îç∞Ïù¥ÌÑ∞Î•º ÏûÑÏãúÎ°ú Î≥µÏÇ¨
+			// Frame µ•¿Ã≈Õ∏¶ ¿”Ω√∑Œ ∫πªÁ
 			memcpy(&tmp1[nFrameData], &tmp[1], framesz);
 			nFrameData += framesz;
 			

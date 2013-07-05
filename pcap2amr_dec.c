@@ -26,7 +26,11 @@ typedef struct pcaprec_hdr_s {
 	uint32 orig_len;       /* actual length of packet */
 } pcaprec_hdr_t;
 
+int b_is_rtp = 1;
 int b_octet_align = 1;
+int dtx = 0;
+int mode = 7;
+int ptime = 20;
 int nAmrCodec = 0;
 
 int amrnb_decode_init();
@@ -64,10 +68,12 @@ int main(int argc, char *argv[])
 		if(strcasecmp(argv[2], "nb") == 0)
 		{
 			nAmrCodec = 0;	// amr-mb
+			mode = 7;
 		}
 		else if(strcasecmp(argv[2], "wb") == 0)
 		{
 			nAmrCodec = 1;	// amr-wb
+			mode = 8;
 		}
 	}
 	if(argc > 3)
@@ -130,7 +136,7 @@ int main(int argc, char *argv[])
 		{	// RTP 
 			nSize = nRet - nSkipHdr;
 			//nRet = fwrite(cData + nSkipHdr, (size_t)1, nSize, fout);
-			printf("PCAP.amr_decode(0x%x, %d)............\n", (unsigned char)(cData + nSkipHdr), nSize);
+			printf("PCAP.amr_decode(0x%x, %d)............\n", (unsigned)(cData + nSkipHdr), nSize);
 			if(nAmrCodec == 0)
 			{
 				nRet = amrnb_decode((char *)(cData + nSkipHdr), nSize, fout);
@@ -139,7 +145,7 @@ int main(int argc, char *argv[])
 			{
 				nRet = amrwb_decode((char *)(cData + nSkipHdr), nSize, fout);
 			}
-			printf("PCAP.amr_decode(0x%x, %d)=%d\n", cData + nSkipHdr, nSize, nRet);
+			printf("PCAP.amr_decode(0x%x, %d)=%d\n", (unsigned)(cData + nSkipHdr), nSize, nRet);
 		}
 		nCount++;
 	}
