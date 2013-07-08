@@ -61,13 +61,13 @@ int main(int argc, char *argv[])
 	}
 	if(argc > 3)
 	{
-		b_octet_align = atoi(argv[3]);
+		mode = atoi(argv[3]);
 	}
 
-	printf("PCM File=[%s], Output=[%s], amr-%s, octet-aligned=%d\n", 
+	printf("PCM File=[%s], Output=[%s], amr-%s, mode=%d, octet-aligned=%d\n", 
 		szInputFileName, szOutputFileName, 
 		(nAmrCodec == 0) ? "nb" : "wb",
-		b_octet_align);
+		mode, b_octet_align);
 
 	fp = fopen(szInputFileName, "rb");
 	if(fp == NULL)

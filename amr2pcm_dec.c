@@ -18,10 +18,12 @@ int nAmrCodec = 0;
 
 int amrnb_decode_init();
 int amrnb_decode_uninit();
+int amrnb_read_bytes(int nMode);
 int amrnb_decode(char *pData, int nSize, FILE *fp);
 
 int amrwb_decode_init();
 int amrwb_decode_uninit();
+int amrwb_read_bytes(int nMode);
 int amrwb_decode(char *pData, int nSize, FILE *fp);
 
 int main(int argc, char *argv[])
@@ -61,13 +63,21 @@ int main(int argc, char *argv[])
 	}
 	if(argc > 3)
 	{
-		b_octet_align = atoi(argv[3]);
+		mode = atoi(argv[3]);
+		if(nAmrCodec == 0)
+		{
+			nAmrSize = amrnb_read_bytes(mode) + 1;
+		}
+		else
+		{
+			nAmrSize = amrwb_read_bytes(mode) + 1;
+		}
 	}
 
-	printf("AMR File=[%s], Output=[%s], amr-%s, octet-aligned=%d\n", 
+	printf("AMR File=[%s], Output=[%s], amr-%s, mode=%d, octet-aligned=%d\n", 
 		szInputFileName, szOutputFileName, 
 		(nAmrCodec == 0) ? "nb" : "wb",
-		b_octet_align);
+		mode, b_octet_align);
 
 	fp = fopen(szInputFileName, "rb");
 	if(fp == NULL)

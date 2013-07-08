@@ -52,6 +52,15 @@ int amrwb_decode_uninit()
 	return 0;
 }
 
+int amrwb_read_bytes(int nMode)
+{
+	if( (nMode >= 0) && (nMode < MAX_FRAME_TYPE) )
+	{
+		return amr_frame_sizes[nMode];
+	}
+	return 0;
+}
+
 int amrwb_decode(char *pData, int nSize, FILE *fp)
 {
 	int nRet = 0;
@@ -217,15 +226,6 @@ int amrwb_encode(char *pData, int nSize, FILE *fp)
 				// 1111 0000 ; CMR (4 bits), Reserved (4 bits)
 				bs_write_u(payload, 4, nCmr);
 				bs_write_u(payload, 4, nReserved);
-			}
-		}
-		else
-		{
-			/** Surf 테스트용 */
-			if(b_octet_align == 0)
-			{	// Bandwidth efficient mode
-				// 1111 ; CMR (4 bits)
-				bs_write_u(payload, 4, nCmr);
 			}
 		}
 		
