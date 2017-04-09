@@ -106,6 +106,21 @@ int main(int argc, char *argv[])
 		stPcapHdr.magic_number, stPcapHdr.version_major, stPcapHdr.version_minor, stPcapHdr.sigfigs, 
 		stPcapHdr.thiszone, stPcapHdr.snaplen, stPcapHdr.network);
 
+	#define LINKTYPE_ETHERNET	1
+	#define LINKTYPE_LINUX_SLL	113
+        switch (stPcapHdr.network)
+        {
+                case LINKTYPE_ETHERNET:
+                        nSkipHdr = 14 + 40;
+                        break;
+                case LINKTYPE_LINUX_SLL:
+                        nSkipHdr = 16 + 40;
+                        break;
+                default:
+                        printf("unsupported link type=%x\n", stPcapHdr.network);
+                        return -1;
+        }
+	
 	if(nAmrCodec == 0)
 	{
 		amrnb_decode_init();
